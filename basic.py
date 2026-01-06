@@ -246,3 +246,5 @@ class Board:
         self.board[60] = King("black", 60)
         self.bitboard[6][4] = 1
         self.bitboard[12][60] = 1
+
+
