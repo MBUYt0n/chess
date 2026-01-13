@@ -5,6 +5,8 @@ FILE_A = 0x0101010101010101
 FILE_H = 0x8080808080808080
 NOT_FILE_A = 0xFEFEFEFEFEFEFEFE
 NOT_FILE_H = 0x7F7F7F7F7F7F7F7F
+NOT_FILE_AB = 0xFCFCFCFCFCFCFCFC
+NOT_FILE_GH = 0x3F3F3F3F3F3F3F3F
 
 # Ranks
 RANK_2 = 0x000000000000FF00
@@ -15,7 +17,6 @@ class Pieces:
     def __init__(self):
         self.colour = None
         self.points = None
-        self.directions = None
 
 
 class Pawn(Pieces):
@@ -23,18 +24,114 @@ class Pawn(Pieces):
         super().__init__()
         self.colour = colour
         self.points = 1
-        self.directions = 1 if colour == "white" else -1
 
-    def possible_legal_moves(self, bitboard, own_pieces):
-        direction = 8 if self.colour == "white" else -8
-        single_move = (bitboard << direction) & ~own_pieces
-        double_move = (
-            ((single_move << direction) & ~own_pieces)
-            if (self.colour == "white" and (bitboard & 0x000000000000FF00))
-            or (self.colour == "black" and (bitboard & 0x00FF000000000000))
-            else 0
-        )
-        return single_move | double_move
+    def possible_legal_moves_white(self, pawns, enemy_pieces, empty):
+        one_step = (pawns << 8) & empty
+
+        two_step = ((one_step & (RANK_2 << 8)) << 8) & empty
+
+        captures_left = (pawns << 7) & NOT_FILE_H & enemy_pieces
+        captures_right = (pawns << 9) & NOT_FILE_A & enemy_pieces
+
+        return one_step | two_step | captures_left | captures_right
+
+    def possible_legal_moves_black(self, pawns, enemy_pieces, empty):
+        one_step = (pawns >> 8) & empty
+
+        two_step = ((one_step & (RANK_7 >> 8)) >> 8) & empty
+
+        captures_left = (pawns >> 9) & NOT_FILE_H & enemy_pieces
+        captures_right = (pawns >> 7) & NOT_FILE_A & enemy_pieces
+
+        return one_step | two_step | captures_left | captures_right
+
+    def possible_legal_moves(self, bitboard, enemy_pieces, empty):
+        if self.colour == "white":
+            return self.possible_legal_moves_white(bitboard, enemy_pieces, empty)
+        else:
+            return self.possible_legal_moves_black(bitboard, enemy_pieces, empty)
+
+
+def _slide_straight(bitboard, own_pieces, occupied):
+    moves = 0
+    # north
+    cur = bitboard
+    while True:
+        cur = (cur << 8) & 0xFFFFFFFFFFFFFFFF
+        if not cur:
+            break
+        moves |= cur
+        if cur & occupied:
+            break
+    # south
+    cur = bitboard
+    while True:
+        cur = cur >> 8
+        if not cur:
+            break
+        moves |= cur
+        if cur & occupied:
+            break
+    # east
+    cur = bitboard
+    while True:
+        cur = (cur & NOT_FILE_H) << 1 & 0xFFFFFFFFFFFFFFFF
+        if not cur:
+            break
+        moves |= cur
+        if cur & occupied:
+            break
+    # west
+    cur = bitboard
+    while True:
+        cur = (cur & NOT_FILE_A) >> 1
+        if not cur:
+            break
+        moves |= cur
+        if cur & occupied:
+            break
+    return moves & ~own_pieces
+
+
+def _slide_diag(bitboard, own_pieces, occupied):
+    moves = 0
+    # north-east
+    cur = bitboard
+    while True:
+        cur = (cur & NOT_FILE_H) << 9 & 0xFFFFFFFFFFFFFFFF
+        if not cur:
+            break
+        moves |= cur
+        if cur & occupied:
+            break
+    # north-west
+    cur = bitboard
+    while True:
+        cur = (cur & NOT_FILE_A) << 7 & 0xFFFFFFFFFFFFFFFF
+        if not cur:
+            break
+        moves |= cur
+        if cur & occupied:
+            break
+    # south-east
+    cur = bitboard
+    while True:
+        cur = (cur & NOT_FILE_H) >> 7
+        if not cur:
+            break
+        moves |= cur
+        if cur & occupied:
+            break
+    # south-west
+    cur = bitboard
+    while True:
+        cur = (cur & NOT_FILE_A) >> 9
+        if not cur:
+            break
+        moves |= cur
+        if cur & occupied:
+            break
+    return moves & ~own_pieces
 
 
 class Rook(Pieces):
@@ -42,12 +139,31 @@ class Rook(Pieces):
         super().__init__()
         self.colour = colour
         self.points = 5
-        self.directions = [8, -8, 1, -1]
 
-    def possible_legal_moves(self, bitboard, own_pieces):
-        return (
-            bitboard << 8 | bitboard >> 8 | bitboard << 1 | bitboard >> 1
-        ) & ~own_pieces
+    def possible_legal_moves(self, bitboard, own_pieces, occupied):
+        return _slide_straight(bitboard, own_pieces, occupied)
+
+
+class Bishop(Pieces):
+    def __init__(self, colour):
+        super().__init__()
+        self.colour = colour
+        self.points = 3
+
+    def possible_legal_moves(self, bitboard, own_pieces, occupied):
+        return _slide_diag(bitboard, own_pieces, occupied)
+
+
+class Queen(Pieces):
+    def __init__(self, colour):
+        super().__init__()
+        self.colour = colour
+        self.points = 9
+
+    def possible_legal_moves(self, bitboard, own_pieces, occupied):
+        return _slide_straight(bitboard, own_pieces, occupied) | _slide_diag(
+            bitboard, own_pieces, occupied
+        )
 
 
 class Knight(Pieces):
@@ -55,73 +171,36 @@ class Knight(Pieces):
         super().__init__()
         self.colour = colour
         self.points = 3
-        self.directions = [15, 17, 10, 6, -15, -17, -10, -6]
 
     def possible_legal_moves(self, bitboard, own_pieces):
         return (
-            bitboard << 15
-            | bitboard << 17
-            | bitboard << 10
-            | bitboard << 6
-            | bitboard >> 15
-            | bitboard >> 17
-            | bitboard >> 10
-            | bitboard >> 6
-        ) & ~own_pieces
-
-
-class Bishop(Pieces):
-    def __init__(self, colour, position):
-        super().__init__()
-        self.colour = colour
-        self.points = 3
-        self.position = position
-        self.directions = [9, 7, -9, -7]
-
-    def possible_legal_moves(self, bitboard, own_pieces):
-        return (
-            bitboard << 9 | bitboard >> 7 | bitboard << 7 | bitboard >> 9
-        ) & ~own_pieces
-
-
-class Queen(Pieces):
-    def __init__(self, colour, position):
-        super().__init__()
-        self.colour = colour
-        self.points = 9
-        self.position = position
-
-    def possible_legal_moves(self, bitboard, own_pieces):
-        return (
-            bitboard << 8
-            | bitboard >> 8
-            | bitboard << 1
-            | bitboard >> 1
-            | bitboard << 9
-            | bitboard >> 7
-            | bitboard << 7
-            | bitboard >> 9
+            ((bitboard & NOT_FILE_A) << 15)
+            | ((bitboard & NOT_FILE_H) << 17)
+            | ((bitboard & NOT_FILE_AB) << 10)
+            | ((bitboard & NOT_FILE_GH) << 6)
+            | ((bitboard & NOT_FILE_H) >> 15)
+            | ((bitboard & NOT_FILE_A) >> 17)
+            | ((bitboard & NOT_FILE_GH) >> 10)
+            | ((bitboard & NOT_FILE_AB) >> 6)
         ) & ~own_pieces
 
 
 class King(Pieces):
-    def __init__(self, colour, position):
+    def __init__(self, colour):
         super().__init__()
         self.colour = colour
         self.points = 0
-        self.position = position
-        self.directions = [8, -8, 1, -1, 9, 7, -9, -7]
 
     def possible_legal_moves(self, bitboard, own_pieces):
         return (
-            bitboard << 8
-            | bitboard >> 8
-            | bitboard << 1
-            | bitboard >> 1
-            | bitboard << 9
-            | bitboard >> 7
-            | bitboard << 7
-            | bitboard >> 9
+            ((bitboard << 8) & 0xFFFFFFFFFFFFFFFF)
+            | (bitboard >> 8)
+            | ((bitboard & NOT_FILE_H) << 1 & 0xFFFFFFFFFFFFFFFF)
+            | ((bitboard & NOT_FILE_A) >> 1)
+            | ((bitboard & NOT_FILE_H) << 9 & 0xFFFFFFFFFFFFFFFF)
+            | ((bitboard & NOT_FILE_A) << 7 & 0xFFFFFFFFFFFFFFFF)
+            | ((bitboard & NOT_FILE_H) >> 7)
+            | ((bitboard & NOT_FILE_A) >> 9)
         ) & ~own_pieces
 
 
